@@ -1,0 +1,61 @@
+---
+format: 
+  html:
+    code-tools: true
+    embed-resources: true
+    toc: false 
+    theme: flatly
+    page-layout: full
+editor: visual
+execute:
+  warning: false
+  message: false
+---
+
+
+```{r}
+#| eval: false
+library(tidyverse)
+library(patchwork)
+setwd("~/scripts/rrg/r-scripts/iso")
+
+df <- read.csv('vcu_alex.csv') |>
+  drop_na() |>
+  slice(-42) |>
+  mutate(across(c(Isometric.Fee, Isometric.Fee.1, Buffer.Fee, tCO2e), ~ as.numeric(str_remove_all(.x, "[$,]"))))
+
+df2 <- read.csv('vcu_cost.csv') |>
+  slice(-1) |>
+  mutate(Year = as.numeric(Year)) |>
+  filter(Year <= 2066) |>
+  select(-X.1) |>
+  mutate(Cost = as.numeric(str_remove(Cost, "\\$")))
+
+me <- left_join(df, df2, by = "Year")
+
+
+p <- df |>
+  ggplot(aes(x = Year, group = 1)) +
+  geom_line(aes(y = Isometric.Fee.1), color = "green", linetype = "dashed") +
+  geom_line(aes(y = Buffer.Fee), color = "red", linetype = "dashed") +
+  geom_line(aes(y = tCO2e), color = "blue", linetype = "dashed") +
+  geom_point(aes(y = tCO2e, color = "Mg Co2e"), shape = 2) +
+  geom_point(aes(y = Isometric.Fee.1, color = "Isometric Fee"),  shape = 2) +
+  geom_point(aes(y = Buffer.Fee, color = "Buffer Fee"),shape = 1) +
+  theme_bw() +
+  labs(title = "Isometric and Buffer Pool Fees", y = "") +
+  scale_y_continuous(labels = scales::dollar_format()) 
+
+print(p)
+
+ggsave('vcu-model.png', width = 16, height = 6)
+
+p1 <- df |>
+  ggplot(aes(x = Year)) +
+  geom_point(aes(y = Year.Gain, color = "Year Gain"),  shape = 2) 
+
+
+
+```
+
+

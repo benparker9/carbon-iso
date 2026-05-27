@@ -1,0 +1,15 @@
+.navbar {
+  height: 50px !important;  
+}
+
+.navbar-logo {
+  min-height: 40px !important;
+  width: auto !important;
+}
+
+.navbar li, .navbar a {
+  font-size: 14px !important;
+}
+
+
+

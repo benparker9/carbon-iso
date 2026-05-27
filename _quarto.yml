@@ -1,0 +1,23 @@
+project:
+  type: website
+  output-dir: docs
+website:
+  title: "Isometric Model Analysis"
+  search: true
+  navbar:
+    logo: "./www/logo.png"
+    left:
+      - text: "Project ReGAIN"
+        href: index.qmd
+      - text: "Project Forest"
+        href: forest.qmd
+
+format:
+  html:
+    css: styles.css
+    code-fold: true
+
+
+
+
+

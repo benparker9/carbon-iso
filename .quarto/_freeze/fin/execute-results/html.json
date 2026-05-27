@@ -1,0 +1,15 @@
+{
+  "hash": "d3ba16fb16a08a17d8701f85213259bd",
+  "result": {
+    "engine": "knitr",
+    "markdown": "---\nformat: \n  html:\n    code-tools: true\n    embed-resources: true\n    toc: false \n    theme: flatly\n    page-layout: full\neditor: visual\nexecute:\n  warning: false\n  message: false\n---\n\n\n\n::: {.cell}\n\n```{.r .cell-code}\nlibrary(tidyverse)\nlibrary(patchwork)\nsetwd(\"~/scripts/rrg/r-scripts/iso\")\n\ndf <- read.csv('vcu_alex.csv') |>\n  drop_na() |>\n  slice(-42) |>\n  mutate(across(c(Isometric.Fee, Isometric.Fee.1, Buffer.Fee, tCO2e), ~ as.numeric(str_remove_all(.x, \"[$,]\"))))\n\ndf2 <- read.csv('vcu_cost.csv') |>\n  slice(-1) |>\n  mutate(Year = as.numeric(Year)) |>\n  filter(Year <= 2066) |>\n  select(-X.1) |>\n  mutate(Cost = as.numeric(str_remove(Cost, \"\\\\$\")))\n\nme <- left_join(df, df2, by = \"Year\")\n\n\np <- df |>\n  ggplot(aes(x = Year, group = 1)) +\n  geom_line(aes(y = Isometric.Fee.1), color = \"green\", linetype = \"dashed\") +\n  geom_line(aes(y = Buffer.Fee), color = \"red\", linetype = \"dashed\") +\n  geom_line(aes(y = tCO2e), color = \"blue\", linetype = \"dashed\") +\n  geom_point(aes(y = tCO2e, color = \"Mg Co2e\"), shape = 2) +\n  geom_point(aes(y = Isometric.Fee.1, color = \"Isometric Fee\"),  shape = 2) +\n  geom_point(aes(y = Buffer.Fee, color = \"Buffer Fee\"),shape = 1) +\n  theme_bw() +\n  labs(title = \"Isometric and Buffer Pool Fees\", y = \"\") +\n  scale_y_continuous(labels = scales::dollar_format()) \n\nprint(p)\n\nggsave('vcu-model.png', width = 16, height = 6)\n\np1 <- df |>\n  ggplot(aes(x = Year)) +\n  geom_point(aes(y = Year.Gain, color = \"Year Gain\"),  shape = 2) \n```\n:::\n\n\n\n",
+    "supporting": [],
+    "filters": [
+      "rmarkdown/pagebreak.lua"
+    ],
+    "includes": {},
+    "engineDependencies": {},
+    "preserve": {},
+    "postProcess": true
+  }
+}

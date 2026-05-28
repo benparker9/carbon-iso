@@ -25,6 +25,8 @@ RRG has partnered with the [Friends of the Usambara](https://usambaratravels.com
 ```{r}
 library(tidyverse)
 library(patchwork)
+library(leaflet)
+library(sf)
 setwd("~/scripts/rrg/r-scripts/iso")
 
 ```
@@ -33,10 +35,9 @@ setwd("~/scripts/rrg/r-scripts/iso")
 
 ## Ex-Ante Estimates of Biomass Removals
 FOU will be planting secondary forests throughout degraded areas of Tanzania. [Robinson, et al.](https://www.nature.com/articles/s41558-025-02355-5) has published a global peer reviewed dataset of potential carbon removals for secondary forests. RRG is able to access this data through the Robinson, et al. [google earth engine app](https://ee-groa-carbon-accumulation.projects.earthengine.app/view/natural-forest-regeneration-carbon-accumulation-explorer) and through their [raw data](https://zenodo.org/records/15090826). 
-![](./imgs/geebiomassremovals.png)
 
 
-To allow for a deeper uncertainty analysis, RRG used the parameter .tif files provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this extraction script and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 1/3 as m).     
+To allow for a deeper uncertainty analysis, RRG used the parameter (a, k, b) .tif files provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this [extraction script](./gee-extract.html) and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 1/3 as m).     
 
 $$
 y = A \left( 1 - B e^{-k t} \right)^{\frac{1}{1 - m}}
@@ -50,6 +51,54 @@ where:
 - $k$ = growth rate
 - $t$ = time
 - $m$ = shape parameter
+
+#### Project Maps and CR Parameters   
+The map below represents the a parameters for the project region, which are the asymptotic maximum size that the system can reach under ideal conditions (max tC/ha). In the Chapman-Richards model, a corresponds to the theoretical upper limit of the growth process, meaning that as time approaches infinity, growth levels off at this value.    
+
+```{r}
+#| message: false
+#| warning: false
+
+tanzGeo <- read.csv('./csv_data/tanz-cr.csv') |> select(!1) |>
+  rename(b = b1, k = b1_1, coords = .geo) |>
+  mutate(coords = str_extract(coords, "(?<=\\[)[^\\]]+(?=\\])")) |>
+  separate_wider_delim(coords, delim = ",", names = c("lon", "lat")) |>
+  mutate(across(c(lat, lon), as.numeric))
+
+
+offset <- 0.000225
+pal <- colorNumeric("YlOrRd", domain = tanzGeo$a)
+
+leaflet() |>
+  addTiles() |>
+  addRectangles(
+    data = tanzGeo,
+    lng1 = ~lon - offset,
+    lat1 = ~lat - offset,
+    lng2 = ~lon + offset,
+    lat2 = ~lat + offset,
+    color = ~pal(a),
+    fillOpacity = 0.8,
+    stroke = FALSE,
+    popup = ~paste("a parameter value:", a)
+  ) |>
+  setView(
+    lng = mean(tanzGeo$lon),
+    lat = mean(tanzGeo$lat),
+    zoom = 12 
+  ) |>
+  addLegend(
+    pal = pal,
+    values = tanzGeo$a,
+    title = "a parameter"
+  )
+
+
+```
+
+
+
+
 
 ### Growth Curves for the Project Zone  
 

@@ -102,12 +102,11 @@ leaflet() |>
 
 
 
-### Growth Curves for the Project Zone  
+### Growth Curves for the Project Zone 
 For these forecasts, RRG aims to make the most conservative estimates possible and will assume:   
 - the minimum a value of the Robinson dataset -- 88.2   
-- the maximum b value of the Robinson dataset -- 0.5058      
-- the median k value of the Robinson dataset -- 0.01551      
-
+- the maximum b value of the Robinson dataset -- 0.5058 (minimum early growth)        
+- the median k value of the Robinson dataset -- 0.01551 (linearized shape)         
 
 ```{r}
 #| fig-width: 18
@@ -153,6 +152,38 @@ p1 + p2
 
 ```
 
+RRG will also compare the raw values provided by the Robinson dataset. These models assume each 1 ha square will be planted and reach the theoretical yield provided by the model parameters. RRG runs each grid model scenario and visualizes using a hexbin plot where each datapoint represents a grid cell.     
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6 
+
+library(furrr)
+library(hexbin)
+library(arrow)
+
+param <- grid |> select(!c(Sites, lon, lat))
+full_model <- function(a, b, k) {
+  BioHa <- tibble(t = t, Bio = cr(t = t, a = a, b = b, k = k))
+  return(BioHa)
+}
+
+#results <- future_pmap(param, full_model) |> bind_rows(.id = "id")
+#write_parquet(results, "./csv_data/tanz-grid.parquet") 
+results <- read_parquet("./csv_data/tanz-grid.parquet") 
+
+results |>
+  ggplot() +
+  geom_hex(aes(x = t, y = Bio)) +
+  theme_bw() +
+  scale_fill_viridis_c(option = "A") +
+  labs(title = "Estimated aboveground carbon accumulation for Project Forest", fill = "Number of Cells", y = "", 
+       subtitle = "Biomass MgC ha", x="Project Lifetime") 
+
+```
+
+
+
 ### Project Timeline Assumptions   
 RRG has worked with FOU to build forecasted schedules of project activities. These assumptions can be updated given new information, but provide timelines for modeling.
 
@@ -169,33 +200,54 @@ Below is the projected yearly planting totals (in ha).
 | 2029   | 2234  |
 | **Total**   | **6989**  |
 
+For the scaling the CR function, we assume that in 2026 t = 0.   
 
-For the scaling the CR function, we assume that in 2026 t = 0.     
+#### Gross Removals   
+RRG will compare three model scenarios -- minimum a values, maximum a values and the raw Robinson models.  
+The Robinson parameters are at ~1km resolution, do we need to scale each estimate?    
 
 ```{r}
-# create function for later
-growth_curve <- function(t, ha) {
-  biomass <- (cr(t = t, a = 88.2, b = 0.5058, k = 0.01551) * ha * 44/12)  
+raw_results <- results |>
+  group_by(t) |>
+  summarize(Bio = (sum(Bio) * 44/12)) 
+
+bio_min <- function(t, ha) {
+  biomass <- (cr(t = t, a = 88.2, b = 0.5058, k = 0.01551) * ha * 44/12)
+  return(biomass)
+}
+
+bio_max <- function(t, ha) {
+  biomass <- (cr(t = t, a = 144.8, b = 0.5058, k = 0.01551) * ha * 44/12)
   return(biomass)
 }
 
 mega <- tibble(Year = c(2024:2064),
                t = c(0:40),
           AreaPlanted = c(1808, 1417, 1530, 2234, rep(0,37)),
-          Cycle1 = growth_curve(t, AreaPlanted[1]),
-          Cycle2 = c(0, growth_curve(1:40, AreaPlanted[2])),
-          Cycle3 = c(0, 0, growth_curve(1:39, AreaPlanted[3])),
-          Cycle4 = c(rep(0,3), growth_curve(1:38, AreaPlanted[4])),
-          TotalRemovals = Cycle1 + Cycle2 + Cycle3 + Cycle4)
+          Cycle1Min = bio_min(t, AreaPlanted[1]),
+          Cycle1Max = bio_max(t, AreaPlanted[1]),
+          Cycle2Min = c(0, bio_min(1:40, AreaPlanted[2])),
+          Cycle2Max = c(0, bio_max(1:40, AreaPlanted[2])),
+          Cycle3Min = c(0, 0, bio_min(1:39, AreaPlanted[3])),
+          Cycle3Max = c(0, 0, bio_max(1:39, AreaPlanted[3])),
+          Cycle4Min = c(rep(0,3), bio_min(1:38, AreaPlanted[4])),
+          Cycle4Max = c(rep(0,3), bio_max(1:38, AreaPlanted[4])),
+          TotalRemovalsMin = Cycle1Min + Cycle2Min + Cycle3Min + Cycle4Min,
+          TotalRemovalsRobinson = raw_results$Bio,
+          TotalRemovalsMax = Cycle1Max + Cycle2Max + Cycle3Max + Cycle4Max)
+
 
 mega_mod <- mega |>
-  pivot_longer(col = Cycle1:Cycle4, names_to = "cycle", values_to = "MgC02e")
+  select(Year, TotalRemovalsMin, TotalRemovalsRobinson, TotalRemovalsMax) |>
+  pivot_longer(col = TotalRemovalsMin:TotalRemovalsMax, names_to = "scenario", values_to = "MgCo2e")
 
+library(scales)
 mega_mod |>
-  ggplot(aes(x=Year, y = MgC02e, color = cycle)) +
+  ggplot(aes(x=Year, y = MgCo2e, color = scenario)) +
   geom_point() +
   theme_bw() +
-  labs(title = "Biomass Removals per Planting Cycle", y = "Mg Co2e", color = "Planting Cycle")
+  labs(title = "Gross Biomass Removals per Model Scenario", y = "", subtitle = "Mg Co2e", color = "Model Scenario") +
+  scale_y_continuous(label = comma)
 
 
 ```
@@ -255,23 +307,30 @@ $$
 #| fig-height: 6
 
 mega2 <- mega |>
-  mutate(NetRemovals = ((TotalRemovals * (1 - pb) * (1 - unc)) - discount(TotalRemovals, leak)) 
-         - discount(TotalRemovals, emissions)) 
+  mutate(NetRemovalsMin = ((TotalRemovalsMin * (1 - pb) * (1 - unc)) - discount(TotalRemovalsMin, leak)) 
+         - discount(TotalRemovalsMin, emissions),
+        NetRemovalsMax = ((TotalRemovalsMax * (1 - pb) * (1 - unc)) - discount(TotalRemovalsMax, leak)) 
+         - discount(TotalRemovalsMax, emissions),
+        NetRemovalsRobinson = ((TotalRemovalsRobinson * (1 - pb) * (1 - unc)) - discount(TotalRemovalsRobinson, leak)) 
+         - discount(TotalRemovalsRobinson, emissions)) |>
+  select(Year, t, NetRemovalsMin, NetRemovalsMax, NetRemovalsRobinson)
 
-mega2$RemovalRate <- c(NA, diff(mega2$NetRemovals))
+mega2$RemovalRateMin <- c(NA, diff(mega2$NetRemovalsMin))
+mega2$RemovalRateMax <- c(NA, diff(mega2$NetRemovalsMax))
+mega2$RemovalRateRobinson <- c(NA, diff(mega2$NetRemovalsRobinson))
 
 p1 <- mega2 |>
-  ggplot(aes(x=Year, y = NetRemovals)) +
+  ggplot(aes(x=Year, y = NetRemovalsMin)) +
   geom_point() +
   theme_bw() +
   labs(title = "Modeled Net C02e Accumulation for Project Forest", color = "", y = "Net Mg C02e", x="Year") +
   geom_vline(xintercept=2026.5, color = "red") +
   geom_text(aes(x = 2032, y = 750000, label = "Large spike as project scales")) +
   geom_text(aes(x = 2053, y = 730000, label = paste("Total Removals:", 
-                                                    format(max(mega2$NetRemovals), big.mark = ",", nsmall = 2), "Mg Co2e")))
+                                                    format(max(mega2$NetRemovalsMin), big.mark = ",", nsmall = 2), "Mg Co2e")))
 
 p2 <- mega2 |>
-  ggplot(aes(x=Year, y=RemovalRate)) +
+  ggplot(aes(x=Year, y=RemovalRateMin)) +
   geom_bar(stat="identity") +
   theme_bw() +
   labs(title = "Annual Removal Rate for Project Forest", y = "Annual Mg C02e Removals", x="Year") +
@@ -291,9 +350,6 @@ There are multiple assumptions that go into the net Co2e removals from project a
 |----------|----------|
 | **Project Details**    |      |
 | Project Size     | 6989 ha     |
-| **Removals**    |      |
-| Growth Curves    | Max tC/ha : 54.92     |
-| Total Co2e Removals   | Max tCo2e: 698,384 tCo2e    |
 | **Emissions**    |      |
 | Estimated rate    | 20%    |
 | **Discount Rates**    |      |

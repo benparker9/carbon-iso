@@ -1,6 +1,10 @@
 project:
   type: website
-  output-dir: docs
+  output-dir: .
+  render:
+  - "*.qmd"
+  - "!dash/comp.qmd"
+
 website:
   title: "Isometric Model Analysis"
   search: true

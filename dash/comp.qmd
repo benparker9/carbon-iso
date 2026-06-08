@@ -1,0 +1,146 @@
+---
+format: 
+  dashboard
+editor: visual
+server: shiny
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| context: setup
+library(tidyverse)
+library(shiny)
+library(scales)
+
+tanz <- read_csv("../csv_data/tanz-net-removals.csv") 
+tanz[1,6] = 102105
+
+tanz1 <- tanz |>
+  mutate(iso_fee = case_when(
+                             RemovalRateMin <= 25000 ~ 10,
+                             RemovalRateMin > 25000 & RemovalRateMin <=50000 ~ 9,
+                            RemovalRateMin > 50000 & RemovalRateMin <=75000 ~ 8,
+                            RemovalRateMin > 75000 & RemovalRateMin <= 100000 ~ 7,
+                            RemovalRateMin > 100000 & RemovalRateMin <= 150000 ~ 6),
+        iso_cost = RemovalRateMin * iso_fee,
+        buffer_vcu = RemovalRateMin * 0.2,
+        buffer_cost = buffer_vcu * iso_fee,
+        net_vcu = RemovalRateMin - buffer_vcu)
+
+
+# why does the overhead compound from the year before and not stay at the 80k flat rate?
+rrg_cost <- tibble(
+                   Year = (2026:2066),
+                   t = (0:40),
+                   overhead = c(60000, 70000, 75000, 75000, 75000, 75000, rep((80000+ (80000 * 0.02)), 35)),
+                   spv = c(30000, 25000, 20000, 20000, 20000, 20000, rep((25000+ (25000 * 0.02)), 35)),
+                   consulting = c(30000, 25000, 20000, 20000, 20000, 20000, rep((25000+ (25000 * 0.02)), 35)),
+                  travel = c(rep(5000,5), 30000, rep((5000 + (5000 *0.02)), 4), (30000 + (30000 * 0.02)),
+                             rep((5000 + (5000 *0.02)), 4), (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
+                             (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
+                             (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
+                             (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
+                             (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
+                             (30000 + (30000 * 0.02))),
+                    total = overhead + spv + consulting + travel) |>
+                  pivot_longer(cols = overhead:total, names_to = "Cost", values_to = "Amount")
+
+
+fou_cost <- tibble(
+                   Year = (2026:2066),
+                   t = (0:40),
+                   monitoring_cost = c(0, rep(25000, 5), rep(0, 35)),
+                  inventory_cost = c(rep(0, 4), 30000, 0, 20000, rep(0, 2), 20000, 0, 25000, rep(0,2), 30000, 0,
+                  30000, rep(0, 2), 30000, 0, 35000, rep(0,2), 35000, 0, 35000, rep(0, 2), 35000, 0, 40000, rep(0, 2),
+                  40000, 0, 45000, rep(0,2), 50000, 0),
+                  admin_cost = c(rep(0, 4), 50000, 25000, rep((25000 + (25000 * 0.02)), 35)),
+                  incentives = c(rep(0, 4), 70000, 25000, rep((25000 + (25000 * 0.02)), 35)),
+                  total = monitoring_cost + inventory_cost + admin_cost + incentives) |>
+            pivot_longer(cols = monitoring_cost:total, names_to = "Cost", values_to = "Amount")
+
+
+
+```
+
+# Tanzania    
+
+## Costs
+
+### FOU
+
+```{r}
+plotOutput("fou_cost")
+
+
+```
+
+```{r}
+#| context: server
+total_cost_fou <- fou_cost |>
+  filter(Cost == "total") |>
+  group_by(Cost) |>
+  summarize(TotalCost = sum(Amount, na.rm = TRUE)) |>
+  pull(TotalCost)
+
+output$fou_cost <- renderPlot({
+  p <- fou_cost |>
+    ggplot(aes(x = t, y = Amount, color = Cost)) +
+    geom_point() +
+    geom_line() +
+    theme_bw() +
+    labs(title = "FOU Costs over the project lifetime", x = "Time", y = "Cost (USD)")+
+    scale_y_continuous(labels = dollar) +
+    geom_text(x = 35, y = 140000, 
+              label = paste("Total Cost over project lifetime \n:", dollar(total_cost_fou)), 
+              size = 4, color = "black", inherit.aes = FALSE)
+
+
+
+
+  p
+
+})
+
+```
+
+
+### RRG
+```{r}
+plotOutput("rrg_cost")
+
+
+```
+
+
+
+
+```{r}
+#| context: server
+total_cost_rrg <- rrg_cost |>
+  filter(Cost == "total") |>
+  group_by(Cost) |>
+  summarize(TotalCost = sum(Amount, na.rm = TRUE)) |>
+  pull(TotalCost)
+
+
+output$rrg_cost <- renderPlot({
+  p <- rrg_cost |>
+    ggplot(aes(x = t, y = Amount, color = Cost)) +
+    geom_point() +
+    geom_line() +
+    theme_bw() +
+    labs(title = "RRG Costs over the project lifetime", x = "Time", y = "Cost (USD)") +
+    scale_y_continuous(labels = dollar) +
+    geom_text(x = 35, y = 100000, 
+              label = paste("Total Cost over project lifetime:\n", dollar(total_cost_rrg)), 
+              size = 4, color = "black", inherit.aes = FALSE)
+
+  p
+
+})
+
+```
+
+

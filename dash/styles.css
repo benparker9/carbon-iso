@@ -1,0 +1,25 @@
+/* Navbar tab links */
+.navbar-nav .nav-link .nav-link-text {
+  font-size: 14px !important;
+}
+
+/* External nav button */
+.quarto-dashboard-links .quarto-dashboard-link {
+  font-size: 14px !important;
+}
+
+.quarto-dashboard-links .quarto-dashboard-link i {
+  font-size: 14px !important;
+}
+
+/* Navbar height */
+#dashboard-collapse {
+  height: 50px !important;
+}
+
+/* Logo */
+.navbar-brand img {
+  height: 40px !important;
+  width: auto !important;
+}
+

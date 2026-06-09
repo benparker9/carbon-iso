@@ -1,11 +1,21 @@
 ---
+title:
+ "Carbon Dashboard"
+logo: "www/logo.png"
 format: 
-  dashboard
+  dashboard:
+    css: styles.css
+theme: flatly
 editor: visual
 server: shiny
 execute:
   warning: false
   message: false
+orientation: columns
+nav-buttons:
+  - icon: globe
+    href: https://benparker9.github.io/carbon-iso/forest.html
+    text: "Modeling Documents"
 ---
 
 ```{r}
@@ -13,21 +23,14 @@ execute:
 library(tidyverse)
 library(shiny)
 library(scales)
+library(rsconnect)
 
-tanz <- read_csv("../csv_data/tanz-net-removals.csv") 
-tanz[1,6] = 102105
+rsconnect::setAccountInfo(name='cp-stats-541', token='488AAFA7D1CE2AB1FD6E3498C26DCE92', secret='JK1xrlp7NqDSGhDDHTDciaaZtWKD/UnHm/Vf5N5r')
 
-tanz1 <- tanz |>
-  mutate(iso_fee = case_when(
-                             RemovalRateMin <= 25000 ~ 10,
-                             RemovalRateMin > 25000 & RemovalRateMin <=50000 ~ 9,
-                            RemovalRateMin > 50000 & RemovalRateMin <=75000 ~ 8,
-                            RemovalRateMin > 75000 & RemovalRateMin <= 100000 ~ 7,
-                            RemovalRateMin > 100000 & RemovalRateMin <= 150000 ~ 6),
-        iso_cost = RemovalRateMin * iso_fee,
-        buffer_vcu = RemovalRateMin * 0.2,
-        buffer_cost = buffer_vcu * iso_fee,
-        net_vcu = RemovalRateMin - buffer_vcu)
+tanz <- read_csv("tanz-net-removals.csv") 
+
+
+tanz1 <- tanz 
 
 
 # why does the overhead compound from the year before and not stay at the 80k flat rate?
@@ -44,8 +47,7 @@ rrg_cost <- tibble(
                              (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
                              (30000 + (30000 * 0.02)), rep((5000 + (5000 *0.02)), 4), 
                              (30000 + (30000 * 0.02))),
-                    total = overhead + spv + consulting + travel) |>
-                  pivot_longer(cols = overhead:total, names_to = "Cost", values_to = "Amount")
+                    total = overhead + spv + consulting + travel) 
 
 
 fou_cost <- tibble(
@@ -57,48 +59,192 @@ fou_cost <- tibble(
                   40000, 0, 45000, rep(0,2), 50000, 0),
                   admin_cost = c(rep(0, 4), 50000, 25000, rep((25000 + (25000 * 0.02)), 35)),
                   incentives = c(rep(0, 4), 70000, 25000, rep((25000 + (25000 * 0.02)), 35)),
-                  total = monitoring_cost + inventory_cost + admin_cost + incentives) |>
-            pivot_longer(cols = monitoring_cost:total, names_to = "Cost", values_to = "Amount")
+                  total = monitoring_cost + inventory_cost + admin_cost + incentives) 
+            
+```
 
+# {.sidebar}
+
+
+
+**FOU Costs**     
+
+```{r}
+ 
+sliderInput("admin_cost", "Admin Costs", min = 0, max = 2, value = 1, step = .1)
+sliderInput("incentive_cost", "Incentives", min = 0, max = 2, value = 1, step = .1)
+sliderInput("inventory_cost", "Inventory Costs", min = 0, max = 2, value = 1, step = .1)
+sliderInput("monitoring_cost", "Monitoring Costs", min = 0, max = 2, value = 1, step = .1)
+```
+
+
+**RRG Costs**
+
+```{r}
+sliderInput("consulting_cost", "Consulting Costs", min = 0, max = 2, value = 1, step = .1)
+sliderInput("overhead_cost", "Overhead Costs", min = 0, max = 2, value = 1, step = .1)
+sliderInput("spv_cost", "SPV Costs", min = 0, max = 2, value = 1, step = .1)
+sliderInput("travel_cost", "Travel Costs", min = 0, max = 2, value = 1, step = .1)
 
 
 ```
 
-# Tanzania    
+**Removals**
 
-## Costs
+```{r}
+sliderInput("removals", "Removals Scalar", min = 0, max = 2, value = 1, step = .1)
+sliderInput("buffer_fee", "Buffer Rate", min = 0, max = 2, value = 1, step = .1)
+sliderInput("credit_costs", "Credit Purchase Price", min = 15, max = 90, value = 15, step = 1)
 
-### FOU
+```
+
+
+
+
+# Tanzania 
+
+```{r}
+#| context: server
+
+rrg_cost_r <- reactive({
+  rrg_cost |>
+    mutate(
+      overhead    = overhead    * input$overhead_cost,
+      spv         = spv         * input$spv_cost,
+      consulting  = consulting  * input$consulting_cost,
+      travel      = travel      * input$travel_cost,
+      total      = overhead + spv + consulting + travel
+
+    )
+})
+
+fou_cost_r <- reactive({
+  fou_cost |>
+    mutate(
+      monitoring_cost = monitoring_cost * input$monitoring_cost,
+      inventory_cost  = inventory_cost  * input$inventory_cost,
+      admin_cost      = admin_cost      * input$admin_cost,
+      incentives      = incentives      * input$incentive_cost,
+      total      = monitoring_cost + inventory_cost + admin_cost + incentives    )
+})
+
+final_fou <- reactive({
+  fou_cost_r() |>
+    pivot_longer(cols = monitoring_cost:total, names_to = "Cost", values_to = "Amount")
+})
+
+final_rrg <- reactive({
+  rrg_cost_r() |>
+    pivot_longer(cols = overhead:total, names_to = "Cost", values_to = "Amount")
+})
+
+
+tanz_removals <- reactive({
+  tanz1 |>
+    mutate(
+      NetRemovalsMin = (NetRemovalsMin * input$removals) ,
+      RemovalRateMin = c(NetRemovalsMin[1], diff(NetRemovalsMin)),
+      iso_fee = case_when(
+                             RemovalRateMin <= 25000 ~ 10,
+                             RemovalRateMin > 25000 & RemovalRateMin <=50000 ~ 9,
+                            RemovalRateMin > 50000 & RemovalRateMin <=75000 ~ 8,
+                            RemovalRateMin > 75000 & RemovalRateMin <= 100000 ~ 7,
+                            RemovalRateMin > 100000 & RemovalRateMin <= 150000 ~ 6),
+        iso_cost = RemovalRateMin * iso_fee,
+        buffer_vcu = (RemovalRateMin * 0.2) * input$buffer_fee,
+        buffer_cost = buffer_vcu * iso_fee,
+        net_vcu = NetRemovalsMin - buffer_vcu,
+        net_rate = (RemovalRateMin*input$credit_costs) - buffer_cost - iso_cost,
+        net_price = (RemovalRateMin * input$credit_costs) - iso_cost - buffer_cost)
+                 
+})
+
+tanz_vis <- reactive({
+  tanz_removals() |>
+    pivot_longer(cols = NetRemovalsMin:net_price, names_to = "Variable", values_to = "Value")
+})
+
+
+net_earnings <- reactive({
+  tibble(
+         t = tanz_removals()$t,
+         net_earnings = tanz_removals()$net_price - (fou_cost_r()$total + rrg_cost_r()$total))
+
+
+})
+
+
+final_earnings <- reactive({
+  sum(net_earnings()$net_earnings, na.rm = TRUE)
+})
+
+```
+
+## Costs {.tabset}
+
+### Costs  
+
+#### Totals   
+```{r}
+plotOutput("total_cost")
+```
+
+```{r}
+#| context: server
+total_cost_all <- reactive({
+  tibble(
+    t          = fou_cost_r()$t,
+    total_cost = fou_cost_r()$total + rrg_cost_r()$total
+  )
+})
+
+final_cost <- reactive({
+  sum(total_cost_all()$total_cost)
+})
+
+output$total_cost <- renderPlot({
+  p <- total_cost_all() |>
+    ggplot(aes(x = t, y = total_cost)) +
+    geom_point() +
+    geom_line() +
+    theme_bw() +
+    labs(title = paste("Total Costs over the project lifetime:",dollar(final_cost())), x = "Time", y = "Cost (USD)") +
+    scale_y_continuous(labels = dollar) 
+
+
+
+  p
+
+})
+```
+
+
+
+#### Tanz
 
 ```{r}
 plotOutput("fou_cost")
-
-
 ```
 
 ```{r}
 #| context: server
-total_cost_fou <- fou_cost |>
-  filter(Cost == "total") |>
-  group_by(Cost) |>
-  summarize(TotalCost = sum(Amount, na.rm = TRUE)) |>
-  pull(TotalCost)
+total_cost_fou <- reactive({
+  df <- final_fou()
+  
+  df |>
+    filter(Cost == "total") |>
+    pull(Amount) |>
+    sum(na.rm = TRUE)
+})
 
 output$fou_cost <- renderPlot({
-  p <- fou_cost |>
+  p <- final_fou() |>
     ggplot(aes(x = t, y = Amount, color = Cost)) +
     geom_point() +
     geom_line() +
     theme_bw() +
-    labs(title = "FOU Costs over the project lifetime", x = "Time", y = "Cost (USD)")+
-    scale_y_continuous(labels = dollar) +
-    geom_text(x = 35, y = 140000, 
-              label = paste("Total Cost over project lifetime \n:", dollar(total_cost_fou)), 
-              size = 4, color = "black", inherit.aes = FALSE)
-
-
-
-
+    labs(title = paste("FOU Costs over the project lifetime:", dollar(total_cost_fou())), x = "Time", y = "Cost (USD)")+
+    scale_y_continuous(labels = dollar) 
   p
 
 })
@@ -106,41 +252,143 @@ output$fou_cost <- renderPlot({
 ```
 
 
-### RRG
+##### RRG
+
 ```{r}
 plotOutput("rrg_cost")
-
-
 ```
-
-
-
 
 ```{r}
 #| context: server
-total_cost_rrg <- rrg_cost |>
+total_cost_rrg <- reactive({
+final_rrg() |>
   filter(Cost == "total") |>
   group_by(Cost) |>
   summarize(TotalCost = sum(Amount, na.rm = TRUE)) |>
   pull(TotalCost)
-
+})
 
 output$rrg_cost <- renderPlot({
-  p <- rrg_cost |>
+  p <- final_rrg() |>
     ggplot(aes(x = t, y = Amount, color = Cost)) +
     geom_point() +
     geom_line() +
     theme_bw() +
-    labs(title = "RRG Costs over the project lifetime", x = "Time", y = "Cost (USD)") +
-    scale_y_continuous(labels = dollar) +
-    geom_text(x = 35, y = 100000, 
-              label = paste("Total Cost over project lifetime:\n", dollar(total_cost_rrg)), 
-              size = 4, color = "black", inherit.aes = FALSE)
+    labs(title = paste("RRG Costs over the project lifetime:", dollar(total_cost_rrg())), x = "Time", y = "Cost (USD)") +
+    scale_y_continuous(labels = dollar) 
 
   p
 
 })
 
 ```
+
+
+### Removals
+
+#### Curves
+
+```{r}
+plotOutput("netremovals")
+
+```
+
+```{r}
+#| context: server
+tanz_points <- reactive({
+  tanz_vis() |>
+    filter(Variable %in% c("buffer_cost", "iso_cost", "net_price"))
+})
+
+tanz_total_removals <- reactive({
+  tanz_vis() |>
+    filter(Variable == "net_price") |>
+    pull(Value) |>
+    sum(na.rm = TRUE)
+})
+
+output$netremovals <- renderPlot({
+  p <- tanz_points() |>
+  ggplot(aes(x = t, y = Value, color = Variable)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Project Lifetime", y = "Total Values (USD)",
+       title = paste("Net financial gains throughout the project lifetime: \n", format(round(tanz_total_removals()), big.mark = ","))) +
+ scale_y_continuous(labels = scales::comma) +
+ theme_bw()
+
+
+p
+
+})
+```
+
+#### Bars
+
+```{r}
+plotOutput("removalrate")
+
+```
+
+```{r}
+#| context: server
+tanz_bar <- reactive({
+  tanz_vis() |>
+    filter(Variable %in% c("buffer_cost", "iso_cost", "net_rate"))
+})
+
+output$removalrate <- renderPlot({
+  p <- tanz_bar() |>
+  ggplot(aes(x = t, y = Value, fill = Variable)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Time", y = "Total Values (USD)",
+       title = "Removal Rates per Year") +
+  scale_y_continuous(labels = scales::comma) +
+  theme_bw()
+
+p
+
+})
+```
+
+### Net Earnings    
+```{r}
+plotOutput("netearnings")
+
+```
+
+```{r}
+#| context: server
+output$netearnings <- renderPlot({
+  p <- net_earnings() |>
+  ggplot(aes(x = t, y = net_earnings)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Project Lifetime", y = "Total Values (USD)",
+       title = paste("Net financial gains throughout the project lifetime: \n", format(round(final_earnings()), big.mark = ","))) +
+ scale_y_continuous(labels = scales::comma) +
+ theme_bw()
+
+
+p
+
+})
+
+# run  this in terminal to deploy app 
+rsconnect::deployApp(
+  appDir   = "./",
+  account  = "cp-stats-541",
+  server   = "shinyapps.io",
+  forceUpdate = TRUE
+)
+
+
+```
+
+
+
+
+
+
 
 

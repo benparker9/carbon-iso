@@ -1,0 +1,10 @@
+name: dash
+title:
+username: freds-data-dump
+account: freds-data-dump
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17488292
+bundleId:
+url: https://freds-data-dump.shinyapps.io/dash/
+version: 1

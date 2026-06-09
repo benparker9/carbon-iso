@@ -1,0 +1,10 @@
+name: dash
+title:
+username: cp-stats-541
+account: cp-stats-541
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17488608
+bundleId: 12105658
+url: https://cp-stats-541.shinyapps.io/dash/
+version: 1

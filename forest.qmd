@@ -1,5 +1,5 @@
 ---
-title: Project Forest Modeling Document      
+title: Project Forest Ex-Ante Modeling Document      
 subtitle: Prepared by Reduce.Reuse.Grow.Inc  
 format: 
   html:
@@ -55,7 +55,7 @@ where:
 - $m$ = shape parameter
 
 #### Project Maps and CR Parameters   
-The map below represents the a parameters for the project region, which are the asymptotic maximum size that the system can reach under ideal conditions (max tC/ha). In the Chapman-Richards model, a corresponds to the theoretical upper limit of the growth process, meaning that as time approaches infinity, growth levels off at this value.    
+The map below represents the a parameters for the project region, which are the asymptotic maximum size that the system can reach under ideal conditions (max tC/ha). In the Chapman-Richards model, *a* corresponds to the theoretical upper limit of the growth process, meaning that as time approaches infinity, growth levels off at this value.    
 
 ```{r}
 #| message: false
@@ -98,6 +98,21 @@ leaflet() |>
 
 ```
 
+#### Uncertainty in Removals and Reductions   
+Although the Isometric reforestation protocol provides no direct guidance on quantifying ex-ante estimates of biomass growth, the Isometric standard, [section 3.7](https://registry.isometric.com/standard/2.1#uncertainty-in-removals-and-reductions), provides three avenues for determining parameters. RRG will run models for two of the three scenarios --      
+  a) Conservative estimates of input parameters     
+  b) Monte carlo simulations    
+
+**Ex-Ante Estimates Outline**   
+1) Extract a, b, k parameters for project polygons    
+  a) Visualize distributions for each parameter   
+For conservative estimates:   
+2) Use either <=16th or >=84th percentile for all parameters (whichever yields most conservative)    
+For monte carlo estimates:    
+3) Randomly sample from input distributions many times (e.g., n = 1,000). Select estimates <=16th percentile    
+4) Scale estimates by hectares planted, carbon fraction, C02 constant, root-to-shoot ratio     
+5) Use default rates for leakage, emissions, and uncertainty     
+6) Calculate net ex-ante estimates    
 
 
 

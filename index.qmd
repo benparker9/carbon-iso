@@ -15,9 +15,9 @@ execute:
 
 ---
 ## Abstract   
-RRG has partnered with the [Philippine Eagle Foundation (PEF)](https://www.philippineeaglefoundation.org/) to conduct Project ReGAIN throughout the ancestral domain of the Obu-Manuvu on Mindano Island, Philippines. RRG and PEF have partnered to plant 1.5 million trees over ~1500 hectares and is planning the expansion of ~3000 hectares.   
+RRG has partnered with the [Philippine Eagle Foundation (PEF)](https://www.philippineeaglefoundation.org/) to conduct Project ReGAIN throughout the ancestral domain of the Obu-Manuvu on Mindano Island, Philippines. RRG and PEF have partnered to plant 4500 hectares.        
 
-**In total, RRG estimates project activities can sequester ~ 905, 503 Mg Co2e by the year 2064.**   
+**In total, RRG estimates project activities can sequester ~ 1,095,040 Mg Co2e by the year 2064.**   
 
 ## Import Libraries
 
@@ -27,6 +27,7 @@ library(patchwork)
 library(leaflet)
 library(sf)
 library(purrr)
+library(furrr)
 library(ggtext)
 setwd("~/scripts/rrg/r-scripts/iso")
 
@@ -166,20 +167,48 @@ Also, given the nature of the CR equation, RRG uses the following percentiles fo
 set.seed(333)
 n_sim <- 1000
 
-a_sim <- runif(n_sim, min = min(philGeo$a), max = max(philGeo$a)) 
-b_sim <- rnorm(n_sim, mean = mean(philGeo$b), sd = sd(philGeo$b)) 
-k_sim <- rnorm(n_sim, mean = mean(philGeo$k), sd = sd(philGeo$k)) 
+param <- tibble(
+  a = runif(n_sim, min = min(philGeo$a), max = max(philGeo$a)) ,
+  b = rnorm(n_sim, mean = mean(philGeo$b), sd = sd(philGeo$b)),
+  k = rnorm(n_sim, mean = mean(philGeo$k), sd = sd(philGeo$k))
+)
+
+cr <- function(a, b, k, t) {
+  Biomass <- a * (1 - b * exp(-k * t)) ^ (1 / (1 - 0.33))
+  return(Biomass)
+}
+
+t <- c(0:40)
+
+full_model <- function(a, b, k) {
+  BioHa <- tibble(t = t, Bio = cr(t = t, a = a, b = b, k = k))
+  return(BioHa)
+}
+
+results <- future_pmap(param, full_model) |> bind_rows(.id = "id")
+
+results |>
+  ggplot() +
+  geom_hex(aes(x = t, y = Bio)) +
+  theme_bw() +
+  scale_fill_viridis_c(option = "A") +
+  labs(title = "Monte carlo simulations of estimated aboveground carbon accumulation", fill = "Number of Cells", y = "", 
+       subtitle = "Biomass MgC ha", x="Project Lifetime") 
+
 
 # evaluating at year 40
 t_val <- 40  
 
 y_sim <- tibble(
-  a = a_sim,
-  b = b_sim,
-  k = k_sim,
-  Simulated_bio = a_sim * (1 - b_sim * exp(-k_sim * t_val)) ^ (1 / (1 - 0.33))
+  a = param$a,
+  b = param$b,
+  k = param$k,
+  Simulated_bio = param$a * (1 - param$b * exp(-param$k * t_val)) ^ (1 / (1 - 0.33))
 )
 
+
+
+# find 16th/84th quartile
 min_sim <- tibble(
                   lower = quantile(y_sim$Simulated_bio, probs = 0.16),
                   a = quantile(y_sim$a, probs = 0.16),
@@ -202,10 +231,11 @@ y_sim |>
   labs(title = "Parameter Distributions for the Project Zone", x = "Simulated Values (Mg C ha) at Year 40", y="Density", subtitle = "Dashed red line indicates 16th percentile")
 
 
+# pull out curves
 t_vec <- seq(0, 40, by = 1) 
 
 bio_matrix <- sapply(t_vec, function(t) {
-  a_sim * (1 - b_sim * exp(-k_sim * t)) ^ (1 / (1 - 0.33))
+  param$a * (1 - param$b * exp(-param$k * t)) ^ (1 / (1 - 0.33))
 })
 
 conservative_curve <- tibble(
@@ -228,9 +258,9 @@ conservative_curve <- tibble(
 | Monte carlo simulations  |  k  |  0.0223  |
 | Monte carlo simulations  |  Mg C ha at year 40  |  119.44  |
 
-Using these estimates, RRG anticipates the project generating **114.82 - 119.44** Mg C per hectare (gross removals).      
+Using these estimates, RRG anticipates the project generating **114.82 - 119.44** Mg C per hectare (gross aboveground removals). For all net removals calculations below, RRG will use the **most conservative parameter estimates**.              
 
-##### Growth Curves for the Project Zone  
+#### Growth Curves for the Project Zone  
 
 ```{r}
 #| fig-width: 14
@@ -267,7 +297,7 @@ p1 + p2
 
 ```
 
-### Assumptions   
+### Project Timeline Assumptions       
 These assumptions can be updated given new information.   
 - Project Time Period: **2024-2064**    
 - Planting Time Period: **2024-2030** (need schedules from PEF, [planting logs here](https://docs.google.com/spreadsheets/d/1OgfzW679wY32_994kkzQF6qOeARioZwA/edit?gid=1031012934#gid=1031012934))       
@@ -291,8 +321,53 @@ RRG doesn't have concrete forecast schedules for instance 2 from PEF. For models
 
 For the scaling the CR function, we assume that in 2024 age = 0.     
 
+### Biomass Scaling  
+
+**Aboveground**     
+
+The Robinson, et al. study quantifies potential aboveground carbon gains for secondary forests on the hectare scale. Their estimates already include Mg C, so, to quantify CO2e Aboveground ([equation 15](https://registry.isometric.com/protocol/agroforestry/1.0#calculation-of-coe-3)), RRG uses the following equation:     
+
+$$
+CO2e AGB (t) = {\frac{44}{12}} * Mg AGB C (t)   
+$$
+
+where:    
+
+- $t$ = time      
+- $44/12$ = ratio of C mass to Co2 mass    
+- $Mg AGB C$ = conservative curve taken from Robinson study   
+
+**Belowground**     
+To quantify the belowground biomass, RRG uses [equation 17](https://registry.isometric.com/protocol/agroforestry/1.0#calculation-of-coe-4). Per Isometric guidelines, RRG first conducted a literature review of google scholar to determine root to shoot ratios for agroforestry systems in the Philippines. Search terms included "root to shoot ratio philippines agroforestry", "root to shoot ratio philippines". Results provided data on species' specific root to shoot ratios, but none for the region as a whole. Because the ex-ante forecasts are not species specific, RRG will use table 4.4 provided by the [IPCC](https://www.ipcc-nggip.iges.or.jp/public/2019rf/pdf/4_Volume4/19R_V4_Ch04_Forest%20Land.pdf), where the project zone is tropical rainforest indicated by [UN mapping](https://data.apps.fao.org/catalog/dataset/2fb209d0-fd34-4e5e-a3d8-a13c241eb61b/resource/87db158f-1b31-40a1-b76c-8d3964607158). In the future, once field inventories have begun, RRG will conduct a species' specific root-to-shoot literature review.         
+
+
+$$
+CO2e BGB (t) =  CO2e AGB (t) * RS     
+$$
+
+where:    
+
+- $t$ = time      
+- $CO2e BGB$ = total carbon stored in belowground biomass       
+- $RS$ = dimensionless root to shoot ratio - 0.325           
+
+
+**Total CO2e Stored**   
+The total amount of CO2 stored from an agroforestry project is calculated as:   
+
+$$
+CO2e Stored (t) =  CO2e AGB (t) + CO2e BGB (t)         
+$$
+
+where:    
+
+- $t$ = time      
+- $CO2e BGB$ = total carbon stored in belowground biomass       
+- $CO2e AGB$ = total carbon stored in aboveground biomass       
+- $CO2e Stored$ = total carbon stored in both biomass pools         
+
+
 ```{r}
-#| eval: false
 pef_logs <- read.csv('csv_data/pef_log.csv')
 pef_logs1 <- pef_logs[-1,] |>
   mutate(pDate = ymd(End.Date.of.Planting.Event)) |>
@@ -302,9 +377,10 @@ pef_logs1 <- pef_logs[-1,] |>
   group_by(year) |>
   summarize(total_ha = sum(area, na.rm = TRUE))
 
+
 # create function for later
 growth_curve <- function(age, ha) {
-  biomass <- ((coef(cr)["a"] * (1 - coef(cr)["b"] * exp(-coef(cr)["k"] * age)) ^ (1 / (1-0.67)) * ha) * 44/12)
+  biomass <- ((167.0002 * (1 - 0.5438 * exp(-0.0224 * age)) ^ (1 / (1 - 0.33)) * ha) * 44/12) + (((167.0002 * (1 - 0.5438 * exp(-0.0224 * age)) ^ (1 / (1 - 0.33)) * ha) * 44/12) * 0.325)
   return(biomass)
 }
 
@@ -321,47 +397,26 @@ mega <- tibble(Year = c(2024:2064),
           TotalRemovals = Cycle1 + Cycle2 + Cycle3 + Cycle4 + Cycle5 + Cycle6 + Cycle7)
 
 mega_mod <- mega |>
-  pivot_longer(col = Cycle1:Cycle7, names_to = "cycle", values_to = "MgC")
+  pivot_longer(col = Cycle1:Cycle7, names_to = "cycle", values_to = "MgCO2e")
+
+library(scales)
 
 mega_mod |>
-  ggplot(aes(x=Year, y = MgC, color = cycle)) +
+  ggplot(aes(x=Year, y = MgCO2e, color = cycle)) +
   geom_point() +
   theme_bw() +
-  labs(title = "Biomass Removals per Planting Cycle", y = "Mg Co2e", color = "Planting Cycle")
+  labs(title = "Gross CO2e Removals per Planting Cycle", y = "Mg Co2e", color = "Planting Cycle") +
+  scale_y_continuous(label = comma)
 
 
 ```
+
+In total, RRG anticipates gross removals to be **2,433,422 Mg Co2e** at year 40.    
+
+
 
 ## Project Emissions      
-
-### Fertilizer Use      
-PEF will be utilizing four distinct fertilizers to prep sites and ensure strong saplings. All fertilizers will be made by PEF from natural waste found throughout the nursery areas.     
-It is expected that PEF will utilize these fertilizers from years 1-3 for each project instance. However, PEF will monitor and track their fertilizer use.     
-[Attached here](https://docs.google.com/document/d/1Z5JtSc4RT0DZXd64uHlfG_oOwWxp9t6h8AvUT48b8ZU/edit?tab=t.0) is the documentation for how RRG quantified fertilizer use including each fertilizer description.     
-
-**Assumptions**   
-For these models, RRG is using the Verra protocol, however RRG will need to update them based on the Isometric protocol. Using the Verra protocol, RRG estimates ferilizer emissions to be **39.45 Mg Co2e** per hectare assuming an average planting density of ~2,000 trees per hectare.    
-RRG will scale 39.45 by hectares in production from **2024-2030** for total Co2e emissions.    
-
-```{r}
-#| eval: false
-fert <- 39.45
-
-mega1 <- mega |>
-  mutate(AreaProduction = cumsum(AreaPlanted),
-  FertEmissions = AreaProduction * fert)
-
-# assuming emissions stop after 2030
-mega1$FertEmissions[mega1$Year > 2030] <- 0
-
-```
-
-
-### Leakge     
-Mindanao Island has available data regarding historical grower records and illegal logging rates. However, there is no data available for the Obu-Manuvu people. RRG can see from remote sensing that farms throughout the project zone are quite small and are believed to be subsistence farms.   
-Moving into the future, RRG and PEF will complete the FPIC process and hold local farmer interviews to determine foregone production within the project area. Project activities will not displace any farms within the project area. PEF aims to mitigate leakage into the surrounding region by employing these farmers and providing them with an alternate, sustainable livelihood.   
-Isometric handles the leakage assessment during validation events, however it's important RRG considers leakage in removal models. For this analysis, RRG assumes a **25%** leakage rate (subject to change).   
-For ex-ante estimations, leakage must be quantified in tCo2. To do this with the default 25% rate, RRG takes 25% of total Co2e removals per year.       
+RRG and PEF will need to collaborate to conduct a cradle-to-grave life cycle assessment (LCA) to calculate emissions for project activities in three main pools - embodied, transportation and energy use. RRG and PEF have not conducted this analysis yet, and will employ a 20% discount rate.     
 
 ```{r}
 #helper for later
@@ -370,102 +425,99 @@ discount <- function(metric, scale) {
   return(mass)
 }
 
-leak <- 0.25
+emissions <- 0.2
+```
 
+
+### Leakge     
+RRG understands that Isometric performs the leakage analysis. However, RRG still aims to account for leakage and uses a **20%** leakage rate (subject to change). For ex-ante estimations, leakage must be quantified in Mg CO2. To do this with the default 20% rate, RRG takes 20% of total Co2e removals per year.       
+
+```{r}
+leak <- 0.20
 ```
 
 ### Uncertainty      
-RRG aims to further address uncertainty in performance through monte carlo simulation. However, for now RRG will utilize a blanket 10% uncertainty rate. In practice, RRG takes 10% of the total Co2e removals per year.    
+RRG aims to further address uncertainty in deeper analysis, but for now RRG will utilize a blanket 10% uncertainty rate. In practice, RRG takes 10% of the total Co2e removals per year.    
 
 ```{r}
 unc <- 0.1
 
 ```
 
-### Performance Benchmark      
-Isometric is in charge of quantifying the dynamic performance benchmark. The PB will most likely sway our estimates of MgC/ha. So, RRG will utilize monte carlo simulation to provide a range of performance scenarios. 
+### Counterfactual      
+Isometric is in charge of quantifying the dynamic performance benchmark and counterfactual. The PB will most likely sway our estimates of MgC/ha. For now, RRG utilizes a 5% counterfactual.   
 
 ```{r}
-pb <- 0
+pb <- 0.05 
 
 ```
 
 
+
 ## Net Carbon Removals      
-For now, RRG is following the net carbon removals equation provided by Verra. RRG will soon transfer methodologies to Isometric. Below is the Verra equation to calculate net carbon removals.     
-
-![](./imgs/netremovalseq.PNG)    
-
-
-Simply, net removals are quantified as    
+Per [equation 13](https://registry.isometric.com/protocol/agroforestry/1.0#calculation-of-coe-1) of the agroforestry protocol, net CO2e removals are quantified as:     
 
 $$
-Net Removals  (Mg Co2e) = (Gross Removals  (Mg Co2e) * Discount Factors) - Emissions    
+CO2e Removal (t) = CO2e Stored (t) - CO2e Counterfactual (t) - CO2e Emissions    
 $$
+
+where:    
+
+- $t$ = time      
+- $CO2e Removal$ = total net CO2e removal, in Mg CO2e       
+- $CO2e Stored$ = total CO2e stored in both biomass pools, in Mg CO2e         
+- $CO2e Counterfactual$ = total counterfactual CO2 removed from the atmosphere and stored as organic carbon in living trees in the absence of Project activities, in Mg CO2e         
+- $CO2e Emissions$ = total GHG emissions (leakage + LCA), in Mg CO2e         
 
 
 
 ```{r}
 #| fig-width: 18
 #| fig-height: 6
-#| eval: false
-mega2 <- mega1 |>
-  mutate(NetRemovals = ((TotalRemovals * (1 - pb) * (1 - unc)) - discount(TotalRemovals, leak)) - FertEmissions) 
 
-mega2$RemovalRate <- c(NA, diff(mega2$NetRemovals))
+mega2 <- mega |>
+  mutate(NetRemovals = ((TotalRemovals) - discount(TotalRemovals, pb) - discount(TotalRemovals, unc)  - (discount(TotalRemovals, leak) + discount(TotalRemovals, emissions)))) 
+
+mega2$RemovalRate <- c(mega2$NetRemovals[1], diff(mega2$NetRemovals))
 
 p1 <- mega2 |>
   ggplot(aes(x=Year, y = NetRemovals)) +
   geom_point() +
+  geom_line() +
   theme_bw() +
   labs(title = "Modeled Net C02e Accumulation for Project ReGAIN", color = "", y = "Net Mg C02e", x="Year") +
-  geom_vline(xintercept=2030.5, color = "red") +
-  geom_text(aes(x = 2035, y = 750000, label = "Fertilizer use ends"),size=4) +
-  geom_text(aes(x = 2061, y = 730000, label = "Total Removals:\n905,543 Mg Co2e"),size=4)
+  geom_text(aes(x = 2057, y = 730000, label = paste("Total Removals:\n", format(mega2$NetRemovals[41],
+                                                                                big.mark = ",", nsmall = 2), 
+                                                    "Mg Co2e")),size=4) +
+  scale_y_continuous(label = comma)
 
 p2 <- mega2 |>
   ggplot(aes(x=Year, y=RemovalRate)) +
   geom_bar(stat="identity") +
   theme_bw() +
-  labs(title = "Annual Removal Rate for Project ReGAIN", y = "Annual Mg C02e Removals", x="Year") +
-  annotate("segment", x = 2037, xend = 2033, y = 160000, yend = 160000, colour = "red", size=0.5, alpha=0.6, arrow=arrow()) +
-  geom_text(aes(x = 2045, y = 160000, label = "Large spike when fertilizer use ends"),size=4) 
+  labs(title = "Annual Removal Rate for Project ReGAIN", y = "Annual Mg C02e Removals", x="Year")+
+  scale_y_continuous(label = comma)
+ 
 
 p1 + p2
 
 ```
 
+In total, RRG currently estimates that by year 40, net CO2e removals will be **~1,095,040 Mg CO2e.**    
+
+
 ### Model Leverage Points   
-There are multiple assumptions that go into the net Co2e removals from project activities. To review, below is a table of the assumptions used in model calculations.     
+There are multiple assumptions that go into the net Co2e removals from project activities. To review, below is a table of the assumptions used in model calculations. RRG would like if Isometric could provide feedback on the validity of these assumptions.        
 
 **Assumptions**
 
 | Model Input | Statistic |
 |----------|----------|
-| **Project Details**    |      |
-| Instance 1 Area    | 1500 ha     |
-| Instance 2 Area     | 3000 ha     |
-| **Removals**    |      |
-| Growth Curves    | Max tC/ha : 89.64     |
-| Total Co2e Removals   | Max tCo2e: 1,393,143     |
-| **Emissions**    |      |
-| Fertilizer    | 39.45 Mg Co2e/ha    |
 | **Discount Rates**    |      |
-| Leakage    | 25%    |
+| Leakage    | 20%    |
+| Emissions    | 20%    |
 | Uncertainty    | 10%    |
-| Performance Benchmark    | 0% (assuming optimal performance)    |
-
-
-
-
-**Next Steps**    
-- Integrate Isometric protocols   
-- Simulate a range of scenarios involving gross removals, discount factors and emissions.   
-
-
-
-
-
+| Performance Benchmark    | 5% |
 
 
 

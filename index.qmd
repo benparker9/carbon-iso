@@ -17,7 +17,7 @@ execute:
 ## Abstract   
 RRG has partnered with the [Philippine Eagle Foundation (PEF)](https://www.philippineeaglefoundation.org/) to conduct Project ReGAIN throughout the ancestral domain of the Obu-Manuvu on Mindano Island, Philippines. RRG and PEF have partnered to plant 4500 hectares.        
 
-**In total, RRG estimates project activities can sequester ~ 1,095,040 Mg Co2e by the year 2064.**   
+**In total, RRG estimates project activities can sequester ~ 1,170,659 Mg Co2e by the year 2064.**   
 
 ## Import Libraries
 
@@ -29,6 +29,7 @@ library(sf)
 library(purrr)
 library(furrr)
 library(ggtext)
+library(gt)
 setwd("~/scripts/rrg/r-scripts/iso")
 
 ```
@@ -39,7 +40,7 @@ setwd("~/scripts/rrg/r-scripts/iso")
 PEF will be planting secondary forests throughout degraded areas on Mindanao. [Robinson, et al.](https://www.nature.com/articles/s41558-025-02355-5) has published a global peer reviewed dataset of potential carbon removals for secondary forests. RRG is able to access this data through the Robinson, et al. [google earth engine app](https://ee-groa-carbon-accumulation.projects.earthengine.app/view/natural-forest-regeneration-carbon-accumulation-explorer) and through their [raw data](https://zenodo.org/records/15090826). 
 
 
-To allow for a deeper uncertainty analysis, RRG used the parameter (a, k, b) .tif files (zenodo) provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this [extraction script](./gee-extract.html) and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 1/3 as m).     
+To allow for a deeper uncertainty analysis, RRG used the parameter (a, k, b) .tif files (zenodo) provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this [extraction script](./gee-extract.html) and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 2/3 as m).     
 
 $$
 y = A \left( 1 - B e^{-k t} \right)^{\frac{1}{1 - m}}
@@ -151,7 +152,7 @@ philGeo |>
 
 ```
 
-Given this analysis, the parameter, *a*, follows a uniform distribution, while both *b* and *k* follow normal distributions (slightly right and left skewed respectively).  
+Given this analysis, the parameter, *a*, follows a uniform distribution, while both *b* and *k* follow normal distributions (slightly right and left skewed respectively). However, to use the Robinson error SD's, RRG will utilize normal distribution simulations for all three parameters.      
 Also, given the nature of the CR equation, RRG uses the following percentiles for each parameter (most conservative result):   
 - *a* : 16th percentile   
 - *b* : 84th percentile   
@@ -160,34 +161,56 @@ Also, given the nature of the CR equation, RRG uses the following percentiles fo
 
 #### Monte Carlo Simulations  
 
+**Using Robinson Parameter Standard Error Estimates**      
 
 ```{r}
 #| fig-width: 14
 #| fig-height: 6
+
+error <- read.csv("./csv_data/phil-cr-error-v2.csv") |>
+  mutate(Site = if_else(Site != "", Site, Name)) |>
+  select(!c(1, Name)) |>
+  rename(b_error = b1, k_error = b1_1, coords = .geo) |>
+  mutate(coords = str_extract(coords, "(?<=\\[)[^\\]]+(?=\\])")) |>
+  separate_wider_delim(coords, delim = ",", names = c("lon", "lat")) |>
+  mutate(across(c(lat, lon), as.numeric))
+
+error_param <- error |>
+  select(!c(Site, lon, lat))
+
+
+# set seed for reproducibility
 set.seed(333)
 n_sim <- 1000
 
-param <- tibble(
-  a = runif(n_sim, min = min(philGeo$a), max = max(philGeo$a)) ,
-  b = rnorm(n_sim, mean = mean(philGeo$b), sd = sd(philGeo$b)),
-  k = rnorm(n_sim, mean = mean(philGeo$k), sd = sd(philGeo$k))
+mega_param <- philGeo |>
+  left_join(error, by = c("Site", "lon", "lat"))
+
+# use pmax to bound at 0
+
+param_sim <- tibble(
+  a_mc = pmax(0, rnorm(n_sim, mean = mega_param$a, sd = mega_param$a_error)),
+  b_mc = pmax(0, rnorm(n_sim, mean = mega_param$b, sd = mega_param$b_error)),
+  k_mc = pmax(0, rnorm(n_sim, mean = mega_param$k, sd = mega_param$k_error))
 )
 
+
+# apply CR function to get biomass estimates
+t <- c(0:40)
 cr <- function(a, b, k, t) {
-  Biomass <- a * (1 - b * exp(-k * t)) ^ (1 / (1 - 0.33))
+  Biomass <- a * (1 - b * exp(-k * t)) ^ (1 / (1 - 0.66))
   return(Biomass)
 }
-
-t <- c(0:40)
-
-full_model <- function(a, b, k) {
-  BioHa <- tibble(t = t, Bio = cr(t = t, a = a, b = b, k = k))
+full_model <- function(a_mc, b_mc, k_mc) {
+  BioHa <- tibble(t = t, Bio = cr(t = t, a = a_mc, b = b_mc, 
+                                  k = k_mc))
   return(BioHa)
 }
 
-results <- future_pmap(param, full_model) |> bind_rows(.id = "id")
+#results to just compare at
+results_error <- future_pmap(param_sim, full_model) |> bind_rows(.id = "id")
 
-results |>
+results_error |>
   ggplot() +
   geom_hex(aes(x = t, y = Bio)) +
   theme_bw() +
@@ -195,30 +218,28 @@ results |>
   labs(title = "Monte carlo simulations of estimated aboveground carbon accumulation", fill = "Number of Cells", y = "", 
        subtitle = "Biomass MgC ha", x="Project Lifetime") 
 
+```
 
-# evaluating at year 40
-t_val <- 40  
+```{r}
+#| fig-width: 14
+#| fig-height: 6
 
-y_sim <- tibble(
-  a = param$a,
-  b = param$b,
-  k = param$k,
-  Simulated_bio = param$a * (1 - param$b * exp(-param$k * t_val)) ^ (1 / (1 - 0.33))
-)
-
+t <- 40
+results_t40 <- param_sim |>
+  mutate(Bio = cr(a = a_mc, b = b_mc, k = k_mc, t = 40))
 
 
 # find 16th/84th quartile
 min_sim <- tibble(
-                  lower = quantile(y_sim$Simulated_bio, probs = 0.16),
-                  a = quantile(y_sim$a, probs = 0.16),
-                  b = quantile(y_sim$b, probs = 0.84),
-                  k = quantile(y_sim$k, probs = 0.16)
+                  lower = quantile(results_t40$Bio, probs = 0.16),
+                  a = quantile(results_t40$a_mc, probs = 0.16),
+                  b = quantile(results_t40$b_mc, probs = 0.84),
+                  k = quantile(results_t40$k_mc, probs = 0.16)
 )
 
 
-y_sim |>
-  ggplot(aes(x = Simulated_bio)) +
+results_t40 |>
+  ggplot(aes(x = Bio)) +
   geom_histogram(aes(y = after_stat(density)),
                  bins = 30,
                  fill = "steelblue", 
@@ -231,34 +252,24 @@ y_sim |>
   labs(title = "Parameter Distributions for the Project Zone", x = "Simulated Values (Mg C ha) at Year 40", y="Density", subtitle = "Dashed red line indicates 16th percentile")
 
 
-# pull out curves
-t_vec <- seq(0, 40, by = 1) 
-
-bio_matrix <- sapply(t_vec, function(t) {
-  param$a * (1 - param$b * exp(-param$k * t)) ^ (1 / (1 - 0.33))
-})
-
-conservative_curve <- tibble(
-  t = t_vec,
-  lower = apply(bio_matrix, 2, quantile, probs = 0.16)
-)
-
 ```
+
+
 
 ##### Final Parameter Exports        
 
-| Model Scenario | Statistic | Value |
-|----------|----------|----------|
-| Conservative parameter estimates  |  a  |  167.0002  |
-| Conservative parameter estimates  |  b  |  0.5438  |
-| Conservative parameter estimates  |  k  |  0.0224  |
-| Conservative parameter estimates  |  Mg C ha at year 40  |  114.82  |
-| Monte carlo simulations  |  a  |  167.633  |
-| Monte carlo simulations  |  b  |  0.5445  |
-| Monte carlo simulations  |  k  |  0.0223  |
-| Monte carlo simulations  |  Mg C ha at year 40  |  119.44  |
+```{r}
+sim_export <- tibble(
+                  a = quantile(param_sim$a_mc, probs = 0.16),
+                  b = quantile(param_sim$b_mc, probs = 0.84),
+                  k = quantile(param_sim$k_mc, probs = 0.16)
+)
+sim_export |>
+  gt()
 
-Using these estimates, RRG anticipates the project generating **114.82 - 119.44** Mg C per hectare (gross aboveground removals). For all net removals calculations below, RRG will use the **most conservative parameter estimates**.              
+```
+
+Using these estimates, RRG anticipates the project generating **90.2** Mg C per hectare (gross aboveground removals).              
 
 #### Growth Curves for the Project Zone  
 
@@ -267,26 +278,24 @@ Using these estimates, RRG anticipates the project generating **114.82 - 119.44*
 #| fig-height: 6
 
 df_curves <- tibble(
-                    Year = c(0:40),
-                    Conservative = 167.002 * (1 - 0.5438 * exp(-0.0224 * Year)) ^ (1 / (1 - 0.33)),
-                    Monte = 167.633 * (1 - 0.5445 * exp(-0.0223 * Year)) ^ (1 / (1 - 0.33))
-) |>
-mutate(Conservative_rate = c(Conservative[1], diff(Conservative)),
-Monte_rate = c(Monte[1], diff(Monte))) |>
-pivot_longer(cols = Conservative:Monte_rate, names_to = "Method", values_to = "Value")
+    Year  = 0:40,
+    Monte = cr(a = sim_export$a[[1]], 
+               b = sim_export$b[[1]], 
+               k = sim_export$k[[1]], 
+               t = Year)
+  ) |>                                    
+  mutate(Monte_rate = c(Monte[1], diff(Monte)))
 
 
 p1 <- df_curves |>
-  filter(Method %in% c("Conservative", "Monte")) |> 
-  ggplot(aes(x=Year, y = Value, color = Method)) +
+  ggplot(aes(x=Year, y = Monte)) +
   geom_point() +
   geom_line() +
   theme_bw() +
   labs(title = "Modeled aboveground carbon accumulation for Project ReGAIN", color = "", y = "", subtitle = "Biomass MgC ha", x="Year") 
 
 p2 <- df_curves |>
-  filter(Method %in% c("Conservative_rate", "Monte_rate")) |> 
-  ggplot(aes(x=Year, y=Value, color = Method, linetype = Method)) +
+  ggplot(aes(x=Year, y=Monte_rate)) +
   geom_point() +
   geom_line() + 
   theme_bw() +
@@ -380,12 +389,12 @@ pef_logs1 <- pef_logs[-1,] |>
 
 # create function for later
 growth_curve <- function(age, ha) {
-  biomass <- ((167.0002 * (1 - 0.5438 * exp(-0.0224 * age)) ^ (1 / (1 - 0.33)) * ha) * 44/12) + (((167.0002 * (1 - 0.5438 * exp(-0.0224 * age)) ^ (1 / (1 - 0.33)) * ha) * 44/12) * 0.325)
+  biomass <- ((sim_export$a * (1 - sim_export$b * exp(-sim_export$k * age)) ^ (1 / (1 - 0.66)) * ha) * 44/12) + (((sim_export$a * (1 - sim_export$b * exp(-sim_export$k * age)) ^ (1 / (1 - 0.66)) * ha) * 44/12)* 0.325)
   return(biomass)
 }
 
 mega <- tibble(Year = c(2024:2064),
-               Age = c(0:40),
+               Age = c(1:41),
           AreaPlanted = c(2, 173, 682.5, 643, 1000, 1000, 1000 , rep(0,34)),
           Cycle1 = growth_curve(Age, AreaPlanted[1]),
           Cycle2 = c(0, growth_curve(1:40, AreaPlanted[2])),
@@ -411,7 +420,7 @@ mega_mod |>
 
 ```
 
-In total, RRG anticipates gross removals to be **2,433,422 Mg Co2e** at year 40.    
+In total, RRG anticipates gross removals to be **1,801,013 Mg Co2e** at year 40.    
 
 
 
@@ -430,10 +439,14 @@ emissions <- 0.2
 
 
 ### Leakge     
-RRG understands that Isometric performs the leakage analysis. However, RRG still aims to account for leakage and uses a **20%** leakage rate (subject to change). For ex-ante estimations, leakage must be quantified in Mg CO2. To do this with the default 20% rate, RRG takes 20% of total Co2e removals per year.       
+RRG understands that Isometric performs the leakage analysis and that leakage will be quantified at the first verification event. RRG and PEF have worked with the Obu-Manuvu to ensure that local farmers are not displaced and their productivity is not impacted from project activities. PEF and the OM will ultimately sign agreements to ensure this. 
+Furthermore, PEF aims to prioritize planting barren, degraded land and will not plant within agricultural zones. Because of this, as well as Isometric feedback, RRG will currently assume **0% leakage**.      
+
+For now, RRG has highlighted the agricultural areas within the project zone.    
+[Link to agricultural map](https://rrgslo.maps.arcgis.com/apps/instant/basic/index.html?appid=133585bb0f234a17a3b84c34a27a56dc)   
 
 ```{r}
-leak <- 0.20
+leak <- 0 
 ```
 
 ### Uncertainty      
@@ -503,7 +516,7 @@ p1 + p2
 
 ```
 
-In total, RRG currently estimates that by year 40, net CO2e removals will be **~1,095,040 Mg CO2e.**    
+In total, RRG currently estimates that by year 40, net CO2e removals will be **~1,170,659 Mg CO2e.**    
 
 
 ### Model Leverage Points   
@@ -514,7 +527,7 @@ There are multiple assumptions that go into the net Co2e removals from project a
 | Model Input | Statistic |
 |----------|----------|
 | **Discount Rates**    |      |
-| Leakage    | 20%    |
+| Leakage    | 0%    |
 | Emissions    | 20%    |
 | Uncertainty    | 10%    |
 | Performance Benchmark    | 5% |

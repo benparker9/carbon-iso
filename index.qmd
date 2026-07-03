@@ -17,7 +17,7 @@ execute:
 ## Abstract   
 RRG has partnered with the [Philippine Eagle Foundation (PEF)](https://www.philippineeaglefoundation.org/) to conduct Project ReGAIN throughout the ancestral domain of the Obu-Manuvu on Mindano Island, Philippines. RRG and PEF have partnered to plant 4500 hectares.        
 
-**In total, RRG estimates project activities can sequester ~ 1,170,659 Mg Co2e by the year 2064.**   
+RRG currently estimates a range of net CO2e removals over the project lifetime to be from **~1,296,729,659 - 1,584,892 Mg CO2e** with our most likely scenario yielding **~1,440,811 Mg CO2e**.        
 
 ## Import Libraries
 
@@ -435,19 +435,17 @@ discount <- function(metric, scale) {
 }
 
 emissions <- 0.2
+
 ```
 
 
 ### Leakge     
 RRG understands that Isometric performs the leakage analysis and that leakage will be quantified at the first verification event. RRG and PEF have worked with the Obu-Manuvu to ensure that local farmers are not displaced and their productivity is not impacted from project activities. PEF and the OM will ultimately sign agreements to ensure this. 
-Furthermore, PEF aims to prioritize planting barren, degraded land and will not plant within agricultural zones. Because of this, as well as Isometric feedback, RRG will currently assume **0% leakage**.      
+Furthermore, PEF aims to prioritize planting barren, degraded land and will not plant within agricultural zones. RRG will run three leakage scenarios ~ 5%, 2% and 0%.         
 
 For now, RRG has highlighted the agricultural areas within the project zone.    
 [Link to agricultural map](https://rrgslo.maps.arcgis.com/apps/instant/basic/index.html?appid=133585bb0f234a17a3b84c34a27a56dc)   
 
-```{r}
-leak <- 0 
-```
 
 ### Uncertainty      
 RRG aims to further address uncertainty in deeper analysis, but for now RRG will utilize a blanket 10% uncertainty rate. In practice, RRG takes 10% of the total Co2e removals per year.    
@@ -489,23 +487,45 @@ where:
 #| fig-height: 6
 
 mega2 <- mega |>
-  mutate(NetRemovals = ((TotalRemovals) - discount(TotalRemovals, pb) - discount(TotalRemovals, unc)  - (discount(TotalRemovals, leak) + discount(TotalRemovals, emissions)))) 
+  select(Year, Age, TotalRemovals) |>
+  mutate(LeakageHigh = c(discount(TotalRemovals[1], 0.05),
+                     discount(TotalRemovals[2], 0.05),
+                     discount(TotalRemovals[3], 0.05),
+                     discount(TotalRemovals[4], 0.05), rep(0, 37)),
+         LeakageLow = c(discount(TotalRemovals[1], 0.02),
+                     discount(TotalRemovals[2], 0.02),
+                     discount(TotalRemovals[3], 0.02),
+                     discount(TotalRemovals[4], 0.02), rep(0, 37)),
+        NetRemovalsMid = ((TotalRemovals) - discount(TotalRemovals, pb) - 
+                        discount(TotalRemovals, unc)  - (LeakageLow + discount(TotalRemovals, 0.05))), 
+        NetRemovalsHighEmission = ((TotalRemovals) - discount(TotalRemovals, 0.1) - 
+                        discount(TotalRemovals, unc)  - (LeakageHigh + discount(TotalRemovals, 0.08))),
+        NetRemovalsLowEmission = ((TotalRemovals) - discount(TotalRemovals, 0.02) - 
+                        discount(TotalRemovals, unc))
+ 
+) 
 
-mega2$RemovalRate <- c(mega2$NetRemovals[1], diff(mega2$NetRemovals))
+mega2$RemovalRateMid <- c(mega2$NetRemovalsMid[1], diff(mega2$NetRemovalsMid))
+mega2$RemovalRateHigh <- c(mega2$NetRemovalsHighEmission[1], diff(mega2$NetRemovalsHighEmission))
+mega2$RemovalRateLow <- c(mega2$NetRemovalsLowEmission[1], diff(mega2$NetRemovalsLowEmission))
 
 p1 <- mega2 |>
-  ggplot(aes(x=Year, y = NetRemovals)) +
+  select(Year, NetRemovalsMid, NetRemovalsHighEmission, NetRemovalsLowEmission) |>
+  pivot_longer(cols = NetRemovalsMid:NetRemovalsLowEmission, names_to = "Metric", values_to = "Value") |> 
+  ggplot(aes(x=Year, y = Value, color = Metric)) +
   geom_point() +
   geom_line() +
   theme_bw() +
   labs(title = "Modeled Net C02e Accumulation for Project ReGAIN", color = "", y = "Net Mg C02e", x="Year") +
-  geom_text(aes(x = 2057, y = 730000, label = paste("Total Removals:\n", format(mega2$NetRemovals[41],
+  geom_text(aes(x = 2057, y = 730000, label = paste("Mid Range Total Removals:\n", format(mega2$NetRemovalsMid[41],
                                                                                 big.mark = ",", nsmall = 2), 
                                                     "Mg Co2e")),size=4) +
   scale_y_continuous(label = comma)
 
 p2 <- mega2 |>
-  ggplot(aes(x=Year, y=RemovalRate)) +
+  select(Year, RemovalRateMid, RemovalRateHigh, RemovalRateLow) |>
+  pivot_longer(cols = RemovalRateMid:RemovalRateLow, names_to = "Metric", values_to = "Value") |> 
+  ggplot(aes(x=Year, y = Value, fill = Metric)) +
   geom_bar(stat="identity") +
   theme_bw() +
   labs(title = "Annual Removal Rate for Project ReGAIN", y = "Annual Mg C02e Removals", x="Year")+
@@ -516,21 +536,19 @@ p1 + p2
 
 ```
 
-In total, RRG currently estimates that by year 40, net CO2e removals will be **~1,170,659 Mg CO2e.**    
+RRG currently estimates a range of net CO2e removals over the project lifetime to be from **~1,296,729,659 - 1,584,892 Mg CO2e** with our most likely scenario yielding **~1,440,811 Mg CO2e**.        
 
 
 ### Model Leverage Points   
-There are multiple assumptions that go into the net Co2e removals from project activities. To review, below is a table of the assumptions used in model calculations. RRG would like if Isometric could provide feedback on the validity of these assumptions.        
+RRG has run multiple model scenarios to generate a range of potential net removals. Below RRG outlines the assumptions for each model.     
 
 **Assumptions**
 
-| Model Input | Statistic |
-|----------|----------|
-| **Discount Rates**    |      |
-| Leakage    | 0%    |
-| Emissions    | 20%    |
-| Uncertainty    | 10%    |
-| Performance Benchmark    | 5% |
+| Model Scenario | Leakage | Emissions | Uncertainty | Performance Benchmark |
+|----------|----------|----------|----------|----------|
+| Net Removals Mid  |   2%  |  5% | 10% | 5% |
+| High Emissions    | 5% |  8% |  10% |  10% |
+| Low Emissions    | 0% |  0% |  10% |  2% |
 
 
 

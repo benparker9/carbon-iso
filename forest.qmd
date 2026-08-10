@@ -28,7 +28,9 @@ library(patchwork)
 library(leaflet)
 library(sf)
 library(purrr)
+library(furrr)
 library(ggtext)
+library(gt)
 setwd("~/scripts/rrg/r-scripts/iso")
 
 ```
@@ -99,7 +101,7 @@ leaflet() |>
 ```
 
 #### Uncertainty in Removals and Reductions   
-Although the Isometric reforestation protocol provides no direct guidance on quantifying ex-ante estimates of biomass growth, the Isometric standard, [section 3.7](https://registry.isometric.com/standard/2.1#uncertainty-in-removals-and-reductions), provides three avenues for determining parameters. RRG will run models for two of the three scenarios --      
+Although the Isometric reforestation protocol provides no direct guidance on quantifying ex-ante estimates of biomass growth, the Isometric standard, [section 3.7](https://registry.isometric.com/standard/2.1#uncertainty-in-removals-and-reductions), provides three avenues for determining parameters. RRG will run models for two of the three scenarios --    
   a) Conservative estimates of input parameters     
   b) Monte carlo simulations    
 
@@ -115,88 +117,194 @@ For monte carlo estimates:
 6) Calculate net ex-ante estimates    
 
 
+#### Parameter distributions    
 
-
-### Growth Curves for the Project Zone 
-For these forecasts, RRG aims to make the most conservative estimates possible and will assume:   
-- the minimum a value of the Robinson dataset -- 88.2   
-- the maximum b value of the Robinson dataset -- 0.5058 (minimum early growth)        
-- the median k value of the Robinson dataset -- 0.01551 (linearized shape)         
 
 ```{r}
 #| fig-width: 18
+#| fig-height: 8 
+quants <- tibble(
+                 param = c("a", "b", "k"),
+                 lower_percentile = c(quantile(tanzGeo$a, probs = c(0.16)), (quantile(tanzGeo$b, probs = c(0.16))),
+                    (quantile(tanzGeo$k, probs = c(0.16)))),
+                higher_percentile = c(quantile(tanzGeo$a, probs = c(0.84)), (quantile(tanzGeo$b, probs = c(0.84))),
+                    (quantile(tanzGeo$k, probs = c(0.84))))
+                )
+
+tanzGeo |>
+  pivot_longer(col = a:k, names_to = "param", values_to = "value") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 30,
+                 fill = "steelblue", 
+                 color = "white", 
+                 alpha = 0.7) +
+  geom_density(color = "darkred", linewidth = 1, adjust = 4) +
+  geom_vline(data = quants, aes(xintercept = lower_percentile), 
+             linetype = "dashed", color = "red") +
+  geom_vline(data = quants, aes(xintercept = higher_percentile), 
+             linetype = "dashed", color = "red") +
+  facet_wrap(~param, scales = "free") +
+  theme_classic() +
+  labs(title = "Parameter Distributions for the Project Zone", x = "Values", y="Density", subtitle = "Dashed red line indicates 16th - 84th percentile")
+
+
+```
+
+Analysis of the $k$ parameter indicates linear shape (min: 0.01, max: 0.024) for the project region.       
+
+Given the nature of the CR equation, RRG uses the following percentiles for each parameter (most conservative result):   
+- *a* : 16th percentile   
+- *b* : 16th percentile   
+- *k* : 16th percentile   
+
+#### Monte Carlo Simulations  
+
+**Using Robinson Parameter Standard Error Estimates**      
+
+```{r}
+#| fig-width: 14
 #| fig-height: 6
 
-grid <- tanzGeo |> distinct()
-t <- c(0:40)
+error <- read.csv("./csv_data/tanz-cr-error-v2.csv") |>
+  rename(a_error = b1, b_error = b1_1, k_error = b1_2, coords = .geo) |>
+  mutate(coords = str_extract(coords, "(?<=\\[)[^\\]]+(?=\\])")) |>
+  separate_wider_delim(coords, delim = ",", names = c("lon", "lat")) |>
+  mutate(across(c(lat, lon), as.numeric))
 
+error_param <- error |>
+  select(!c(lon, lat))
+
+
+# set seed for reproducibility
+set.seed(333)
+n_sim <- 1000
+
+mega_param <- tanzGeo |>
+  left_join(error, by = c("lon", "lat"))
+
+# use pmax to bound at 0
+
+param_sim <- tibble(
+  a_mc = pmax(0, rnorm(n_sim, mean = mega_param$a, sd = mega_param$a_error)),
+  b_mc = pmax(0, rnorm(n_sim, mean = mega_param$b, sd = mega_param$b_error)),
+  k_mc = pmax(0, rnorm(n_sim, mean = mega_param$k, sd = mega_param$k_error))
+)
+
+
+# apply CR function to get biomass estimates
+t <- c(0:40)
 cr <- function(a, b, k, t) {
-  Biomass <- a * (1 - b * exp(-k * t)) ^ (1 / (1 - 0.33))
+  Biomass <- a * (1 - b * exp(-k * t)) ^ (1 / (1 - 0.66))
   return(Biomass)
 }
 
-df <- tibble(t = t, Bio = cr(t = t, a = 88.2, b = 0.5058, k = 0.01551)) 
-df$MaxBio <-  cr(t = t, a = 144.8, b = 0.5058, k = 0.01551)
-df$RemovalRate <- c(NA, diff(df$Bio))
+full_model <- function(a_mc, b_mc, k_mc) {
+  BioHa <- tibble(t = t, Bio = cr(t = t, a = a_mc, b = b_mc, 
+                                  k = k_mc))
+  return(BioHa)
+}
 
 
-p1 <- df |>
-  ggplot(aes(x=t)) +
-  geom_line(aes(y=Bio, color = "Minimum Biomass"), linewidth = 2, show.legend = FALSE) +
-  geom_line(aes(y=MaxBio, color = "Maximum Biomass"), linewidth = 2, show.legend = FALSE) +
-  geom_ribbon(aes(ymin = Bio, ymax = MaxBio), position = "identity", fill = "lightgrey") +
+#results to just compare at
+results_error <- future_pmap(param_sim, full_model) |> bind_rows(.id = "id")
+
+results_error |>
+  ggplot() +
+  geom_hex(aes(x = t, y = Bio)) +
   theme_bw() +
-  labs(title = "Estimated <span style='color: #17b3b7;'>minimum</span> and <span style='color: #f35e5a;'>maximum</span> aboveground carbon accumulation for Project Forest", color = "", y = "", 
-       subtitle = "Biomass MgC ha", x="Project Lifetime") +
-  theme(
-    legend.position = "none",
-    plot.title = element_markdown(), 
-    panel.grid.minor = element_blank()
-    )
+  scale_fill_viridis_c(option = "A") +
+  labs(title = "Monte carlo simulations of estimated aboveground carbon accumulation", fill = "Number of Cells", y = "", 
+       subtitle = "Biomass MgC ha", x="Project Lifetime") 
 
-p2 <- df |>
-  ggplot(aes(x=t, y=RemovalRate)) +
+```
+
+```{r}
+#| fig-width: 14
+#| fig-height: 6
+
+t <- 40
+results_t40 <- param_sim |>
+  mutate(Bio = cr(a = a_mc, b = b_mc, k = k_mc, t = 40))
+
+
+# find 16th/84th quartile
+min_sim <- tibble(
+                  lower = quantile(results_t40$Bio, probs = 0.16),
+                  a = quantile(results_t40$a_mc, probs = 0.84),
+                  b = quantile(results_t40$b_mc, probs = 0.16),
+                  k = quantile(results_t40$k_mc, probs = 0.16)
+)
+
+
+results_t40 |>
+  ggplot(aes(x = Bio)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 30,
+                 fill = "steelblue", 
+                 color = "white", 
+                 alpha = 0.7) +
+  geom_density(color = "darkred", linewidth = 1, adjust = 1) +
+  geom_vline(data = min_sim, aes(xintercept = lower), 
+             linetype = "dashed", color = "red") +
+  theme_classic() +
+  labs(title = "Parameter Distributions at Year 40 for the Project Zone", x = "Simulated Values (Mg C ha) at Year 40", y="Density", subtitle = "Dashed red line indicates 16th percentile")
+
+
+```
+
+These results confirm field knowledge and show two site curves -- for village sites (lower elevation, drier) and forest reserve sites (higher elevation, precipitation).      
+
+
+##### Final Parameter Exports        
+
+```{r}
+sim_export <- tibble(
+                  a = quantile(param_sim$a_mc, probs = 0.10),
+                  b = quantile(param_sim$b_mc, probs = 0.16),
+                  k = quantile(param_sim$k_mc, probs = 0.16)
+)
+
+
+sim_export |>
+  gt()
+
+```
+
+```{r}
+#| fig-width: 14
+#| fig-height: 6
+
+df_curves <- tibble(
+    Year  = 0:40,
+    Monte = cr(a = sim_export$a[[1]], 
+               b = sim_export$b[[1]], 
+               k = sim_export$k[[1]], 
+               t = Year)
+  ) |>                                    
+  mutate(Monte_rate = c(NA, diff(Monte)))
+
+
+p1 <- df_curves |>
+  ggplot(aes(x=Year, y = Monte)) +
   geom_point() +
-  geom_smooth(method = "loess", linetype = "longdash", alpha = 0.6, color = "black") + 
+  geom_line() +
   theme_bw() +
-  labs(title = "Annual Removal Rate for Project Forest", color = "", y = "", 
-       subtitle = "Annual Biomass MgC ha", x="Project Lifetime") 
+  labs(title = "Modeled aboveground carbon accumulation for Project ReGAIN", color = "", y = "", subtitle = "Biomass MgC ha", x="Year") 
+
+p2 <- df_curves |>
+  ggplot(aes(x=Year, y=Monte_rate)) +
+  geom_point() +
+  geom_line() + 
+  theme_bw() +
+  labs(title = "Annual Removal Rate for Project ReGAIN", color = "", linetype = "", y = "", subtitle = "Annual Biomass Change MgC ha", x="Year") 
 
 p1 + p2
 
 
 ```
 
-RRG will also compare the raw values provided by the Robinson dataset. These models assume each 1 ha square will be planted and reach the theoretical yield provided by the model parameters. RRG runs each grid model scenario and visualizes using a hexbin plot where each datapoint represents a grid cell.     
-
-```{r}
-#| fig-width: 12
-#| fig-height: 6 
-
-library(furrr)
-library(hexbin)
-library(arrow)
-
-param <- grid |> select(!c(Sites, lon, lat))
-full_model <- function(a, b, k) {
-  BioHa <- tibble(t = t, Bio = cr(t = t, a = a, b = b, k = k))
-  return(BioHa)
-}
-
-#results <- future_pmap(param, full_model) |> bind_rows(.id = "id")
-#write_parquet(results, "./csv_data/tanz-grid.parquet") 
-results <- read_parquet("./csv_data/tanz-grid.parquet") 
-
-results |>
-  ggplot() +
-  geom_hex(aes(x = t, y = Bio)) +
-  theme_bw() +
-  scale_fill_viridis_c(option = "A") +
-  labs(title = "Estimated aboveground carbon accumulation for Project Forest", fill = "Number of Cells", y = "", 
-       subtitle = "Biomass MgC ha", x="Project Lifetime") 
-
-```
-
+ 
 
 
 ### Project Timeline Assumptions   
@@ -222,6 +330,7 @@ RRG will compare three model scenarios -- minimum a values, maximum a values and
 The Robinson parameters are at ~1km resolution, do we need to scale each estimate?    
 
 ```{r}
+#| eval: false
 raw_results <- results |>
   group_by(t) |>
   summarize(Bio = (sum(Bio) * 44/12)) 
@@ -317,7 +426,7 @@ $$
 
 
 ```{r}
-#| eval: true 
+#| eval: false 
 #| fig-width: 18
 #| fig-height: 6
 

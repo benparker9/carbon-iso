@@ -14,6 +14,7 @@ execute:
   message: false
 
 ---
+
 ## Abstract   
 RRG has partnered with the [Philippine Eagle Foundation (PEF)](https://www.philippineeaglefoundation.org/) to conduct Project ReGAIN throughout the ancestral domain of the Obu-Manuvu on Mindano Island, Philippines. RRG and PEF have partnered to plant 4500 hectares.        
 
@@ -40,7 +41,7 @@ setwd("~/scripts/rrg/r-scripts/iso")
 PEF will be planting secondary forests throughout degraded areas on Mindanao. [Robinson, et al.](https://www.nature.com/articles/s41558-025-02355-5) has published a global peer reviewed dataset of potential carbon removals for secondary forests. RRG is able to access this data through the Robinson, et al. [google earth engine app](https://ee-groa-carbon-accumulation.projects.earthengine.app/view/natural-forest-regeneration-carbon-accumulation-explorer) and through their [raw data](https://zenodo.org/records/15090826). 
 
 
-To allow for a deeper uncertainty analysis, RRG used the parameter (a, k, b) .tif files (zenodo) provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this [extraction script](./gee-extract.html) and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 2/3 as m).     
+To allow for a deeper uncertainty analysis, RRG used the parameter (a, k, b) .tif files (zenodo) provided by Robinson to get parameter estimates for the prediction curves for each pixel of the project area. These estimates were then exported through this [extraction script](./rrg-iso.html) and are used to calculate estimated biomass at t with the following Chapman Richard's equation (using 2/3 as m).     
 
 $$
 y = A \left( 1 - B e^{-k t} \right)^{\frac{1}{1 - m}}
@@ -549,7 +550,6 @@ RRG has run multiple model scenarios to generate a range of potential net remova
 | Net Removals Mid  |   2%  |  5% | 10% | 5% |
 | High Emissions    | 5% |  8% |  10% |  10% |
 | Low Emissions    | 0% |  0% |  10% |  2% |
-
 
 
 
